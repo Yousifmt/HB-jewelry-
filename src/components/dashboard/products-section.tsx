@@ -84,14 +84,7 @@ export function ProductsSection({
                 triggerClassName={cn(compact ? "h-9 px-3 text-xs" : "h-9 px-3 text-sm")}
                 triggerLabel="Add"
               />
-              <Button
-                variant="outline"
-                className={cn(compact ? "h-9 px-3 text-xs" : "h-9 px-3 text-sm")}
-                onClick={handleExport}
-              >
-                <Download className="mr-2 h-3.5 w-3.5" />
-                Export
-              </Button>
+              
             </div>
           </div>
         </div>
