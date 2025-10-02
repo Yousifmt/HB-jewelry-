@@ -34,7 +34,6 @@ import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 
 /* ===================== Schema ===================== */
-// نتعامل مع الفراغ كـ undefined، ونطلب رقماً >= 0
 const productSchema = z.object({
   name: z.string().min(1, "Name is required"),
   buyPriceBHD: z.preprocess(
@@ -73,7 +72,6 @@ type UploadResp = {
 };
 
 type AddProductDialogProps = {
-  /** حجم زر الفتح (افتراضي sm للموبايل) */
   triggerSize?: "sm" | "default" | "lg";
   triggerClassName?: string;
   triggerLabel?: string;
@@ -99,12 +97,15 @@ export function AddProductDialog({
   const xhrRef = useRef<XMLHttpRequest | null>(null);
   const { toast } = useToast();
 
-  // 1) form defaults
-const form = useForm<ProductForm>({
-  resolver: zodResolver(productSchema),
-  defaultValues: { name: "", buyPriceBHD: undefined },
-})
+  // Refs to manage focus & scroll-on-focus (mobile)
+  const nameRef = useRef<HTMLInputElement | null>(null);
+  const priceRef = useRef<HTMLInputElement | null>(null);
 
+  // Form
+  const form = useForm<ProductForm>({
+    resolver: zodResolver(productSchema),
+    defaultValues: { name: "", buyPriceBHD: undefined },
+  });
 
   useEffect(() => {
     return () => {
@@ -124,11 +125,31 @@ const form = useForm<ProductForm>({
     setUploadError(null);
     setUploadDone(false);
     setIsSubmitting(false);
-    // نعيد الحقول لقيم البداية (الحقل الرقمي يبقى undefined)
     form.reset({ name: "", buyPriceBHD: undefined });
   };
 
-  // رفع الصورة عبر /api/upload
+  // --- Mobile helpers ---
+  const scrollIntoViewCentered = (el: HTMLElement | null) => {
+    if (!el) return;
+    // Give the keyboard a tick to animate in, then center the field
+    setTimeout(() => {
+      try {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+      } catch {}
+    }, 100);
+  };
+
+  const handleEnterToNext = (
+    e: React.KeyboardEvent<HTMLInputElement>,
+    next?: () => void
+  ) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      next?.();
+    }
+  };
+
+  // Upload via API
   const uploadViaApi = async (file: File) => {
     return await new Promise<UploadResp>((resolve, reject) => {
       const formData = new FormData();
@@ -211,10 +232,7 @@ const form = useForm<ProductForm>({
         updatedAt: serverTimestamp(),
       });
 
-      toast({
-        title: "Success",
-        description: "Product added successfully.",
-      });
+      toast({ title: "Success", description: "Product added successfully." });
       resetAll();
       setOpen(false);
     } catch (err: any) {
@@ -251,7 +269,7 @@ const form = useForm<ProductForm>({
         </Button>
       </DialogTrigger>
 
-      <DialogContent className="sm:max-w-[460px] px-4 sm:px-6">
+      <DialogContent className="sm:max-w-[460px] px-4 sm:px-6 overscroll-contain">
         <DialogHeader>
           <DialogTitle className="text-base sm:text-lg">Add New Product</DialogTitle>
           <DialogDescription className="text-xs sm:text-sm">
@@ -270,9 +288,24 @@ const form = useForm<ProductForm>({
                   <FormLabel className="text-xs sm:text-sm">Name</FormLabel>
                   <FormControl>
                     <Input
-                      className="h-9 text-sm"
+                      ref={(el) => {
+                        nameRef.current = el;
+                        // preserve RHF's ref if needed
+                        // @ts-expect-error - forwarding within shadcn Input
+                        field.ref = el;
+                      }}
+                      autoComplete="off"
                       placeholder="e.g., Pearl Necklace"
-                      {...field}
+                      // Prevent iOS zoom by keeping font-size >= 16px on small screens
+                      className="h-12 text-[16px] sm:h-9 sm:text-sm"
+                      value={field.value}
+                      onChange={field.onChange}
+                      onFocus={(e) => scrollIntoViewCentered(e.currentTarget)}
+                      onKeyDown={(e) =>
+                        handleEnterToNext(e, () => priceRef.current?.focus())
+                      }
+                      enterKeyHint="next"
+                      inputMode="text"
                     />
                   </FormControl>
                   <FormMessage className="text-xs" />
@@ -280,7 +313,7 @@ const form = useForm<ProductForm>({
               )}
             />
 
-            {/* Buy Price (controlled دائماً) */}
+            {/* Buy Price */}
             <FormField
               control={form.control}
               name="buyPriceBHD"
@@ -288,18 +321,33 @@ const form = useForm<ProductForm>({
                 <FormItem>
                   <FormLabel className="text-xs sm:text-sm">Buy Price (BHD)</FormLabel>
                   <FormControl>
-<Input
-  type="number"
-  inputMode="decimal"
-  step="0.001"
-  value={field.value ?? ""}              // empty initially
-  onChange={(e) => {
-    const v = e.target.value
-    field.onChange(v === "" ? undefined : v) // keep undefined when empty
-  }}
-  placeholder="e.g., 12.500"
-/>
-
+                    <Input
+                      ref={priceRef}
+                      type="number"
+                      inputMode="decimal"
+                      step="0.001"
+                      value={field.value ?? ""} // empty initially
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        field.onChange(v === "" ? undefined : v);
+                      }}
+                      placeholder="e.g., 12.500"
+                      // Prevent iOS zoom: >=16px font on mobile
+                      className="h-12 text-[16px] sm:h-9 sm:text-sm"
+                      onFocus={(e) => scrollIntoViewCentered(e.currentTarget)}
+                      onKeyDown={(e) =>
+                        handleEnterToNext(e, () => {
+                          // On Enter from price, submit the form
+                          // (You can change to focus a next field if you add one)
+                          const formEl = e.currentTarget.form;
+                          if (formEl) {
+                            e.preventDefault();
+                            formEl.requestSubmit();
+                          }
+                        })
+                      }
+                      enterKeyHint="done"
+                    />
                   </FormControl>
                   <FormMessage className="text-xs" />
                 </FormItem>
@@ -315,7 +363,8 @@ const form = useForm<ProductForm>({
                   accept="image/*"
                   onChange={handleImageChange}
                   disabled={isSubmitting}
-                  className="h-9 text-xs file:text-xs"
+                  className="h-11 text-[16px] file:text-[12px] sm:h-9 sm:text-sm"
+                  onFocus={(e) => scrollIntoViewCentered(e.currentTarget)}
                 />
               </FormControl>
 
@@ -373,8 +422,8 @@ const form = useForm<ProductForm>({
               <FormMessage className="text-xs" />
             </FormItem>
 
-            <DialogFooter>
-              <Button type="submit" disabled={isSubmitting} className="h-9 px-3 text-sm">
+            <DialogFooter className="pt-1">
+              <Button type="submit" disabled={isSubmitting} className="h-11 text-[16px] sm:h-9 sm:text-sm">
                 {isSubmitting ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />

@@ -26,7 +26,6 @@ export function DateRangePicker({
 }: DateRangePickerProps) {
   const [open, setOpen] = React.useState(false);
 
-  // نغلق تلقائيًا عند اكتمال المدى
   const handleSelect = (next: DateRange | undefined) => {
     setDate(next);
     if (next?.from && next?.to) setOpen(false);
@@ -48,6 +47,11 @@ export function DateRangePicker({
         : format(date.from, "LLL dd, y")
       : "Pick a date";
 
+  // Larger tap targets
+  const daySize = compact ? "h-8 w-8 text-[13px]" : "h-9 w-9 text-sm";
+  const headCellText = compact ? "text-[12px]" : "text-sm";
+  const navBtnSize = compact ? "h-7 w-7" : "h-8 w-8";
+
   return (
     <div className={cn("grid gap-2", className)}>
       <Popover open={open} onOpenChange={setOpen}>
@@ -56,13 +60,14 @@ export function DateRangePicker({
             id="date"
             variant="outline"
             className={cn(
-              "h-8 w-full justify-between text-left font-normal sm:w-[240px]",
-              compact ? "text-xs" : "text-sm",
+              // Slightly taller & larger text helps across devices
+              "h-9 w-full justify-between text-left font-normal sm:w-[240px]",
+              compact ? "text-[13px]" : "text-sm",
               !date && "text-muted-foreground"
             )}
           >
             <span className="inline-flex items-center">
-              <CalendarIcon className={cn("mr-2", compact ? "h-3.5 w-3.5" : "h-4 w-4")} />
+              <CalendarIcon className={cn("mr-2", compact ? "h-4 w-4" : "h-4 w-4")} />
               {label}
             </span>
 
@@ -73,31 +78,38 @@ export function DateRangePicker({
                 aria-label="Clear date range"
                 role="button"
               >
-                <X className={cn(compact ? "h-3.5 w-3.5" : "h-4 w-4", "opacity-70")} />
+                <X className={cn(compact ? "h-4 w-4" : "h-4 w-4", "opacity-70")} />
               </span>
             ) : null}
           </Button>
         </PopoverTrigger>
 
-        <PopoverContent className={cn("w-[280px] p-2", compact && "p-2")} align="start" sideOffset={6}>
-          {/* From / To inputs (عرض فقط) */}
+        <PopoverContent className={cn("w-[296px]", compact && "p-2")} align="start" sideOffset={6}>
+          {/* From / To display fields — prevent focus/zoom on mobile */}
           <div className="mb-2 grid grid-cols-2 gap-2">
             <div className="space-y-1">
               <label className="block text-[10px] text-muted-foreground">From</label>
               <Input
                 readOnly
+                // Prevent mobile zoom: >=16px, and avoid focusing
+                className="h-9 text-[16px] sm:h-8 sm:text-xs"
+                inputMode="none"
+                tabIndex={-1}
+                onFocus={(e) => e.currentTarget.blur()}
                 value={date?.from ? format(date.from, "LLL dd, y") : ""}
                 placeholder="Select start"
-                className="h-8 text-xs"
               />
             </div>
             <div className="space-y-1">
               <label className="block text-[10px] text-muted-foreground">To</label>
               <Input
                 readOnly
+                className="h-9 text-[16px] sm:h-8 sm:text-xs"
+                inputMode="none"
+                tabIndex={-1}
+                onFocus={(e) => e.currentTarget.blur()}
                 value={date?.to ? format(date.to, "LLL dd, y") : ""}
                 placeholder="Select end"
-                className="h-8 text-xs"
               />
             </div>
           </div>
@@ -105,7 +117,7 @@ export function DateRangePicker({
           <Calendar
             initialFocus
             mode="range"
-            numberOfMonths={1} // ✅ تقويم واحد
+            numberOfMonths={1}
             defaultMonth={date?.from}
             selected={date}
             onSelect={handleSelect}
@@ -114,27 +126,33 @@ export function DateRangePicker({
               months: "flex flex-col space-y-1",
               month: "space-y-1",
               caption: "flex justify-center pt-1 relative items-center",
-              caption_label: "text-xs font-medium",
+              caption_label: "text-sm font-medium",
               nav: "space-x-1 flex items-center",
-              nav_button:
-                "h-6 w-6 rounded-md p-0 opacity-80 hover:opacity-100 inline-flex items-center justify-center border",
+              nav_button: cn(
+                navBtnSize,
+                "rounded-md p-0 opacity-80 hover:opacity-100 inline-flex items-center justify-center border"
+              ),
               table: "w-full border-collapse",
               head_row: "grid grid-cols-7",
-              head_cell: "text-muted-foreground py-1 text-[10px]",
+              head_cell: cn("text-muted-foreground py-1", headCellText),
               row: "grid grid-cols-7",
               cell:
                 "relative p-0 [&:has([aria-selected])]:bg-accent first:[&:has([aria-selected])]:rounded-l-md last:[&:has([aria-selected])]:rounded-r-md",
-              day: "h-6 w-6 rounded-md p-0 font-normal aria-selected:opacity-100 text-[11px]",
+              day: cn(
+                daySize,
+                "rounded-md p-0 font-normal aria-selected:opacity-100"
+              ),
               day_today: "underline underline-offset-2",
               day_outside: "opacity-40",
               day_disabled: "opacity-30",
               day_range_middle: "aria-selected:bg-accent",
               day_range_end: "aria-selected:bg-primary aria-selected:text-primary-foreground",
-              day_selected: "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground",
+              day_selected:
+                "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground",
             }}
           />
 
-          {/* أزرار أسفل التقويم */}
+          {/* Footer actions */}
           <div className="mt-2 flex items-center justify-between gap-2">
             <Button variant="ghost" className="h-8 px-2 text-xs" onClick={() => clearRange()}>
               Clear
