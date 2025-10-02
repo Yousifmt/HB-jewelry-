@@ -1,22 +1,31 @@
+/* globals.css */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   :root {
+    /* Logo palette */
+    --logo-dark: 189 55% 18%;
+    --logo-light: 191 35% 62%;
+
+    /* Base theme */
     --background: 45 25% 98%;
     --foreground: 240 10% 3.9%;
-    --card: 45 25% 98%;
+
+    /* ▼ Make cards very light blue */
+    --card: 191 45% 96%;           /* light, airy blue */
     --card-foreground: 240 10% 3.9%;
-    --popover: 45 25% 98%;
+    --popover: 191 45% 96%;        /* match card */
     --popover-foreground: 240 10% 3.9%;
-    --primary: 180 100% 25.1%; /* dark teal */
+
+    --primary: 180 100% 25.1%;
     --primary-foreground: 180 25% 95%;
-    --secondary: 177 57% 65%; /* light teal */
+    --secondary: 177 57% 65%;
     --secondary-foreground: 180 100% 15%;
     --muted: 240 4.8% 95.9%;
     --muted-foreground: 240 3.8% 46.1%;
-    --accent: 177 57% 90%; /* even lighter teal for hover etc */
+    --accent: 177 57% 90%;
     --accent-foreground: 180 100% 15%;
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 0 0% 98%;
@@ -25,17 +34,25 @@
     --ring: 180 100% 25.1%;
     --radius: 0.5rem;
   }
- 
+
   .dark {
+    /* keep logos the same in dark */
+    --logo-dark: 189 55% 18%;
+    --logo-light: 191 35% 62%;
+
+    /* Dark theme with slight blue lift on cards */
     --background: 240 10% 3.9%;
     --foreground: 0 0% 98%;
-    --card: 240 10% 3.9%;
+
+    /* subtle elevation vs background */
+    --card: 210 15% 12%;           /* very dark blue-gray card */
     --card-foreground: 0 0% 98%;
-    --popover: 240 10% 3.9%;
+    --popover: 210 15% 12%;
     --popover-foreground: 0 0% 98%;
-    --primary: 177 57% 65%; /* light teal */
+
+    --primary: 177 57% 65%;
     --primary-foreground: 180 100% 15%;
-    --secondary: 180 100% 25.1%; /* dark teal */
+    --secondary: 180 100% 25.1%;
     --secondary-foreground: 0 0% 98%;
     --muted: 240 3.7% 15.9%;
     --muted-foreground: 240 5% 64.9%;
@@ -48,11 +65,9 @@
     --ring: 177 57% 65%;
   }
 }
- 
+
 @layer base {
-  * {
-    @apply border-border;
-  }
+  * { @apply border-border; }
   body {
     @apply bg-background text-foreground;
     -webkit-font-smoothing: antialiased;
