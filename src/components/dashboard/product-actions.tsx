@@ -1,19 +1,22 @@
 // HB/src/components/dashboard/product-actions.tsx
-"use client"
+"use client";
 
-import { CheckCircle, MoreHorizontal, Trash2 } from "lucide-react"
-import type { Product } from "@/types"
-import { Button } from "@/components/ui/button"
+import { CheckCircle, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
+import type { Product } from "@/types";
+import { Button } from "@/components/ui/button";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
-export function ProductActions({ product }: { product: Product }) {
-  const openSold = () => document.dispatchEvent(new CustomEvent("hb:open-sold", { detail: product }))
-  const openDelete = () => document.dispatchEvent(new CustomEvent("hb:open-delete", { detail: product }))
+export function ProductActions({
+  product,
+  onEdit,
+}: {
+  product: Product;
+  onEdit?: () => void;
+}) {
+  const openSold = () => document.dispatchEvent(new CustomEvent("hb:open-sold", { detail: product }));
+  const openDelete = () => document.dispatchEvent(new CustomEvent("hb:open-delete", { detail: product }));
 
   return (
     <DropdownMenu>
@@ -25,22 +28,21 @@ export function ProductActions({ product }: { product: Product }) {
       </DropdownMenuTrigger>
 
       <DropdownMenuContent align="end">
-        <DropdownMenuItem
-          onSelect={(e) => { e.preventDefault(); queueMicrotask(openSold) }}
-          disabled={product.sold}
-        >
+        <DropdownMenuItem onClick={() => onEdit?.()}>
+          <Pencil className="mr-2 h-4 w-4" />
+          <span>Edit</span>
+        </DropdownMenuItem>
+
+        <DropdownMenuItem onClick={openSold} disabled={product.sold}>
           <CheckCircle className="mr-2 h-4 w-4" />
           <span>Mark as Sold</span>
         </DropdownMenuItem>
 
-        <DropdownMenuItem
-          className="text-destructive"
-          onSelect={(e) => { e.preventDefault(); queueMicrotask(openDelete) }}
-        >
+        <DropdownMenuItem className="text-destructive" onClick={openDelete}>
           <Trash2 className="mr-2 h-4 w-4" />
           <span>Delete</span>
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
-  )
+  );
 }

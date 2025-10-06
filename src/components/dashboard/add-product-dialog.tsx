@@ -27,6 +27,7 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { db } from "@/lib/firebase";
 import { Loader2, PlusCircle, CheckCircle, AlertCircle } from "lucide-react";
@@ -43,6 +44,14 @@ const productSchema = z.object({
       .min(0, "Buy price must be non-negative")
   ),
   image: z.any().optional(),
+  productLink: z.preprocess(
+    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    z.string().url("Enter a valid URL").optional()
+  ),
+  description: z
+    .string()
+    .max(2000, "Description is too long")
+    .optional(),
 });
 type ProductForm = z.infer<typeof productSchema>;
 
@@ -100,11 +109,18 @@ export function AddProductDialog({
   // Refs to manage focus & scroll-on-focus (mobile)
   const nameRef = useRef<HTMLInputElement | null>(null);
   const priceRef = useRef<HTMLInputElement | null>(null);
+  const linkRef = useRef<HTMLInputElement | null>(null);
+  const descRef = useRef<HTMLTextAreaElement | null>(null);
 
   // Form
   const form = useForm<ProductForm>({
     resolver: zodResolver(productSchema),
-    defaultValues: { name: "", buyPriceBHD: undefined },
+    defaultValues: {
+      name: "",
+      buyPriceBHD: undefined,
+      productLink: "",
+      description: "",
+    },
   });
 
   useEffect(() => {
@@ -125,13 +141,12 @@ export function AddProductDialog({
     setUploadError(null);
     setUploadDone(false);
     setIsSubmitting(false);
-    form.reset({ name: "", buyPriceBHD: undefined });
+    form.reset({ name: "", buyPriceBHD: undefined, productLink: "", description: "" });
   };
 
   // --- Mobile helpers ---
   const scrollIntoViewCentered = (el: HTMLElement | null) => {
     if (!el) return;
-    // Give the keyboard a tick to animate in, then center the field
     setTimeout(() => {
       try {
         el.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -228,6 +243,8 @@ export function AddProductDialog({
         buyPriceBHD: Number(values.buyPriceBHD),
         imageUrl,
         sold: false,
+        productLink: values.productLink || null,
+        description: values.description?.trim() || "",
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
@@ -290,20 +307,16 @@ export function AddProductDialog({
                     <Input
                       ref={(el) => {
                         nameRef.current = el;
-                        // preserve RHF's ref if needed
-                        // @ts-expect-error - forwarding within shadcn Input
+                        // @ts-expect-error shadcn forward ref
                         field.ref = el;
                       }}
                       autoComplete="off"
                       placeholder="e.g., Pearl Necklace"
-                      // Prevent iOS zoom by keeping font-size >= 16px on small screens
                       className="h-12 text-[16px] sm:h-9 sm:text-sm"
                       value={field.value}
                       onChange={field.onChange}
                       onFocus={(e) => scrollIntoViewCentered(e.currentTarget)}
-                      onKeyDown={(e) =>
-                        handleEnterToNext(e, () => priceRef.current?.focus())
-                      }
+                      onKeyDown={(e) => handleEnterToNext(e, () => priceRef.current?.focus())}
                       enterKeyHint="next"
                       inputMode="text"
                     />
@@ -326,27 +339,63 @@ export function AddProductDialog({
                       type="number"
                       inputMode="decimal"
                       step="0.001"
-                      value={field.value ?? ""} // empty initially
+                      value={field.value ?? ""}
                       onChange={(e) => {
                         const v = e.target.value;
                         field.onChange(v === "" ? undefined : v);
                       }}
                       placeholder="e.g., 12.500"
-                      // Prevent iOS zoom: >=16px font on mobile
                       className="h-12 text-[16px] sm:h-9 sm:text-sm"
                       onFocus={(e) => scrollIntoViewCentered(e.currentTarget)}
-                      onKeyDown={(e) =>
-                        handleEnterToNext(e, () => {
-                          // On Enter from price, submit the form
-                          // (You can change to focus a next field if you add one)
-                          const formEl = e.currentTarget.form;
-                          if (formEl) {
-                            e.preventDefault();
-                            formEl.requestSubmit();
-                          }
-                        })
-                      }
-                      enterKeyHint="done"
+                      onKeyDown={(e) => handleEnterToNext(e, () => linkRef.current?.focus())}
+                      enterKeyHint="next"
+                    />
+                  </FormControl>
+                  <FormMessage className="text-xs" />
+                </FormItem>
+              )}
+            />
+
+            {/* Product Link (optional) */}
+            <FormField
+              control={form.control}
+              name="productLink"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel className="text-xs sm:text-sm">Product Link (optional)</FormLabel>
+                  <FormControl>
+                    <Input
+                      ref={linkRef}
+                      type="url"
+                      placeholder="https://example.com/product/123"
+                      className="h-12 text-[16px] sm:h-9 sm:text-sm"
+                      value={field.value ?? ""}
+                      onChange={(e) => field.onChange(e.target.value)}
+                      onFocus={(e) => scrollIntoViewCentered(e.currentTarget)}
+                      onKeyDown={(e) => handleEnterToNext(e, () => descRef.current?.focus())}
+                      enterKeyHint="next"
+                    />
+                  </FormControl>
+                  <FormMessage className="text-xs" />
+                </FormItem>
+              )}
+            />
+
+            {/* Description (optional) */}
+            <FormField
+              control={form.control}
+              name="description"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel className="text-xs sm:text-sm">Description (optional)</FormLabel>
+                  <FormControl>
+                    <Textarea
+                      ref={descRef}
+                      placeholder="Short details about the item, condition, size, etc."
+                      className="min-h-[90px] text-[16px] sm:text-sm"
+                      value={field.value ?? ""}
+                      onChange={field.onChange}
+                      onFocus={(e) => scrollIntoViewCentered(e.currentTarget)}
                     />
                   </FormControl>
                   <FormMessage className="text-xs" />
