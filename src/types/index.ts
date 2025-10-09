@@ -23,7 +23,7 @@ export interface Sale {
 
 export interface Owner {
   id: string;
-  name: "Yousif" | "Hawra" | "Bayan";
+  name: string; // ✅ اسم حر
   contributionBHD: number;
   createdAt: Timestamp;
   updatedAt: Timestamp;

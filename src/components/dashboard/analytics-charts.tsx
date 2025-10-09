@@ -14,19 +14,32 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatMoney } from "@/lib/utils";
 import { useMemo } from "react";
 
+type DailyPoint = {
+  /** "yyyy-MM-dd" */
+  date: string;
+  /** aggregated revenue for that day */
+  revenue: number;
+  /** aggregated profit for that day */
+  profit: number;
+};
+
 interface AnalyticsChartsProps {
-  dailyData: { date: string; revenue: number; profit: number }[];
-  /** ارتفاع الرسم (افتراضي 200) */
+  dailyData: DailyPoint[];
+  /** chart height (px) */
   height?: number;
-  /** إظهار خط الربح إن وُجدت بيانات ربح */
+  /** show profit line only when there's profit data */
   showProfitIfAny?: boolean;
 }
 
-function parseYMD(dateStr: string): Date {
-  // يدعم "yyyy-MM-dd" بشكل ثابت بدون انزياح منطقة زمنية
-  // مثال: "2025-09-04" → UTC منتصف اليوم
-  const [y, m, d] = dateStr.split("-").map((n) => parseInt(n, 10));
-  return new Date(Date.UTC(y, m - 1, d));
+function safeParseYMD(dateStr: string): Date | null {
+  // Accepts "yyyy-MM-dd"; returns UTC midnight date or null
+  if (!dateStr || typeof dateStr !== "string") return null;
+  const parts = dateStr.split("-");
+  if (parts.length !== 3) return null;
+  const [y, m, d] = parts.map((n) => Number(n));
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return null;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return Number.isNaN(dt.getTime()) ? null : dt;
 }
 
 export function AnalyticsCharts({
@@ -34,26 +47,31 @@ export function AnalyticsCharts({
   height = 200,
   showProfitIfAny = true,
 }: AnalyticsChartsProps) {
-  const hasProfit = useMemo(
-    () => showProfitIfAny && dailyData.some((d) => (d.profit ?? 0) > 0),
-    [dailyData, showProfitIfAny]
-  );
+  // Normalize & format labels once
+  const normalized = useMemo(() => {
+    return (dailyData ?? [])
+      .filter((p) => p && typeof p.date === "string")
+      .map((p) => {
+        const dt = safeParseYMD(p.date);
+        const shortDate = dt
+          ? dt.toLocaleDateString("en-US", { month: "short", day: "numeric" })
+          : p.date;
+        return {
+          shortDate,
+          revenue: Number.isFinite(p.revenue) ? p.revenue : 0,
+          profit: Number.isFinite(p.profit) ? p.profit : 0,
+        };
+      });
+  }, [dailyData]);
 
-  const formattedDailyData = useMemo(
-    () =>
-      dailyData.map((d) => {
-        const dt = parseYMD(d.date);
-        const shortDate = dt.toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-        });
-        return { ...d, shortDate };
-      }),
-    [dailyData]
+  const hasData = normalized.length > 0;
+  const showProfit = useMemo(
+    () => showProfitIfAny && normalized.some((d) => (d.profit ?? 0) > 0),
+    [normalized, showProfitIfAny]
   );
 
   const CustomTooltip = ({ active, payload, label }: any) => {
-    if (!active || !payload || !payload.length) return null;
+    if (!active || !Array.isArray(payload) || payload.length === 0) return null;
     return (
       <div className="rounded-md border bg-background p-2 shadow-sm text-xs">
         <div className="grid grid-cols-2 gap-2">
@@ -61,38 +79,38 @@ export function AnalyticsCharts({
             <span className="text-[10px] uppercase text-muted-foreground">Date</span>
             <span className="font-semibold">{label}</span>
           </div>
-          {payload.map((pld: any, i: number) => (
-            <div key={i} className="flex flex-col">
-              <span className="text-[10px] uppercase text-muted-foreground">{pld.name}</span>
-              <span className="font-semibold" style={{ color: pld.color }}>
-                {formatMoney(pld.value)}
-              </span>
-            </div>
-          ))}
+          {payload.map((pld: any, i: number) => {
+            const value = Number.isFinite(pld?.value) ? pld.value : 0;
+            return (
+              <div key={i} className="flex flex-col">
+                <span className="text-[10px] uppercase text-muted-foreground">
+                  {pld?.name ?? ""}
+                </span>
+                <span className="font-semibold" style={{ color: pld?.color }}>
+                  {formatMoney(value)}
+                </span>
+              </div>
+            );
+          })}
         </div>
       </div>
     );
   };
 
-  const hasData = formattedDailyData.length > 0;
-
   return (
     <div className="w-full">
       <Card className="w-full">
         <CardHeader className="py-3">
-          <CardTitle className="text-base">Revenue per Day</CardTitle>
+          <CardTitle className="text-base">Sales (Revenue & Profit)</CardTitle>
         </CardHeader>
         <CardContent className="pl-1 pr-2 pb-3">
           {!hasData ? (
             <div className="flex h-[160px] items-center justify-center text-xs text-muted-foreground">
-              No data in the selected range.
+              No sales in the selected range.
             </div>
           ) : (
             <ResponsiveContainer width="100%" height={height}>
-              <LineChart
-                data={formattedDailyData}
-                margin={{ top: 4, right: 8, left: 0, bottom: 0 }}
-              >
+              <LineChart data={normalized} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis
                   dataKey="shortDate"
@@ -108,7 +126,7 @@ export function AnalyticsCharts({
                   tickLine={false}
                   axisLine={false}
                   width={56}
-                  tickFormatter={(value) => formatMoney(value)}
+                  tickFormatter={(v) => formatMoney(Number(v) || 0)}
                 />
                 <Tooltip content={<CustomTooltip />} />
                 <Line
@@ -120,7 +138,7 @@ export function AnalyticsCharts({
                   dot={{ r: 3 }}
                   activeDot={{ r: 6 }}
                 />
-                {hasProfit && (
+                {showProfit && (
                   <Line
                     type="monotone"
                     dataKey="profit"

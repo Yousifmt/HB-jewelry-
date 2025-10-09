@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { doc, serverTimestamp, updateDoc } from "firebase/firestore";
+import { doc, serverTimestamp, updateDoc, writeBatch, setDoc } from "firebase/firestore";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -24,6 +24,7 @@ import { db } from "@/lib/firebase";
 import type { Product } from "@/types";
 import { Loader2, CheckCircle, AlertCircle } from "lucide-react";
 
+// ====== Schema ======
 const schema = z.object({
   name: z.string().min(1, "Name is required"),
   buyPriceBHD: z.preprocess(
@@ -43,6 +44,7 @@ const schema = z.object({
 });
 type EditForm = z.infer<typeof schema>;
 
+// ====== Upload helpers ======
 const MAX_IMAGE_MB = 10;
 const ALLOWED_MIME = /^image\/(jpeg|jpg|png|webp|gif)$/i;
 const fmtBytes = (n: number) => {
@@ -74,6 +76,7 @@ async function uploadViaApi(file: File, setPct: (n:number)=>void): Promise<Uploa
   });
 }
 
+// ====== Component ======
 export function EditProductDialog({
   product,
   open,
@@ -91,7 +94,7 @@ export function EditProductDialog({
   const [pct, setPct] = useState<number | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadDone, setUploadDone] = useState(false);
-  const xhrRef = useRef<XMLHttpRequest | null>(null); // optional if you want manual aborts
+  const xhrRef = useRef<XMLHttpRequest | null>(null);
 
   const form = useForm<EditForm>({
     resolver: zodResolver(schema),
@@ -105,7 +108,7 @@ export function EditProductDialog({
     },
   });
 
-  // mirror your MarkSoldDialog: reset when opening/when product changes
+  // Reset on open/product change
   useEffect(() => {
     if (open && product) {
       form.reset({
@@ -116,7 +119,6 @@ export function EditProductDialog({
         description: (product as any).description ?? "",
         sold: Boolean(product.sold),
       });
-      // clear upload state
       if (preview) URL.revokeObjectURL(preview);
       setPreview(null);
       setSelectedFile(null);
@@ -130,7 +132,6 @@ export function EditProductDialog({
 
   const handleOpenChange = (next: boolean) => {
     if (!next) {
-      // identical to your Add/MarkSold cleanup style
       if (preview) URL.revokeObjectURL(preview);
       setPreview(null);
       setSelectedFile(null);
@@ -162,50 +163,118 @@ export function EditProductDialog({
   };
 
   const onSubmit = async (values: EditForm) => {
-    if (!product) return;
-    setIsSubmitting(true);
-    setUploadError(null);
+  if (!product) return;
+  setIsSubmitting(true);
+  setUploadError(null);
 
-    try {
-      let imageUrl = product.imageUrl;
-      if (selectedFile) {
-        const { url } = await uploadViaApi(selectedFile, (v) => setPct(v));
-        setPct(100);
-        setUploadDone(true);
-        imageUrl = url;
-      }
-
-      await updateDoc(doc(db, "products", product.id), {
-        name: values.name.trim(),
-        buyPriceBHD: Number(values.buyPriceBHD),
-        soldPriceBHD: typeof values.soldPriceBHD === "number" ? Number(values.soldPriceBHD) : null,
-        productLink: values.productLink || null,
-        description: values.description?.trim() || "",
-        imageUrl,
-        sold: Boolean(values.sold),
-        updatedAt: serverTimestamp(),
-      });
-
-      toast({ title: "Updated", description: "Product updated successfully." });
-      // close like MarkSoldDialog
-      form.reset();
-      onOpenChange(false);
-    } catch (err: any) {
-      console.error("Error updating product:", err);
-      if (typeof err?.message === "string") setUploadError(err.message);
-      toast({ variant: "destructive", title: "Error", description: err?.message || "Failed to update product." });
-    } finally {
-      setIsSubmitting(false);
+  try {
+    // 1) Optional image upload
+    let imageUrl = product.imageUrl;
+    if (selectedFile) {
+      const { url } = await uploadViaApi(selectedFile, (v) => setPct(v));
+      setPct(100);
+      setUploadDone(true);
+      imageUrl = url;
     }
-  };
 
-  const uploadInFlight = Boolean(isSubmitting && selectedFile) && pct !== null && pct < 100 && !uploadError;
+    // 2) Prepare fields
+    const name = values.name.trim();
+    const buy = Number(values.buyPriceBHD ?? 0);
+    const soldFlag = Boolean(values.sold);
+    const soldPrice =
+      typeof values.soldPriceBHD === "number" ? Number(values.soldPriceBHD) : undefined;
+
+    if (soldFlag && (soldPrice == null || Number.isNaN(soldPrice))) {
+      toast({
+        variant: "destructive",
+        title: "Missing sold price",
+        description: "Please enter Sold Price when marking the product as sold.",
+      });
+      setIsSubmitting(false);
+      return;
+    }
+
+    // 3) Batch updates
+    const batch = writeBatch(db);
+    const productRef = doc(db, "products", product.id);
+    const saleRef = doc(db, "sales", product.id); // single authoritative sale doc
+
+    // Update product (do not touch soldAt unless transitioning to sold or clearing)
+    batch.update(productRef, {
+      name,
+      buyPriceBHD: buy,
+      soldPriceBHD: soldPrice ?? null,
+      productLink: values.productLink || null,
+      description: values.description?.trim() || "",
+      imageUrl,
+      sold: soldFlag,
+      ...(soldFlag && !product.sold ? { soldAt: serverTimestamp() } : {}), // first time sold
+      ...(!soldFlag ? { soldAt: null } : {}), // optional: clear soldAt when reverting to unsold
+      updatedAt: serverTimestamp(),
+    });
+
+    // 4) Sync the single sale row
+    if (soldFlag && soldPrice != null) {
+      const profit = soldPrice - buy;
+
+      // If the doc exists: update fields but DO NOT overwrite soldAt/createdAt
+      // If it doesn't exist: create with soldAt/createdAt set once
+      batch.set(
+        saleRef,
+        {
+          productId: product.id,
+          productName: name,
+          buyPriceBHD: buy,
+          soldPriceBHD: soldPrice,
+          profitBHD: profit,
+          // only set these the first time (set() will create them if missing; merge keeps existing)
+          soldAt: serverTimestamp(),
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+    } else {
+      // Now unsold: remove sale row so analytics stop counting it
+      batch.delete(saleRef);
+    }
+
+    // 5) CLEANUP: delete any stray sales with same productId but different doc IDs
+    // (guards against duplicates created by older code)
+    const { getDocs, collection, where, query } = await import("firebase/firestore");
+    const dupSnap = await getDocs(
+      query(collection(db, "sales"), where("productId", "==", product.id))
+    );
+    dupSnap.forEach((d) => {
+      if (d.id !== product.id) batch.delete(d.ref);
+    });
+
+    await batch.commit();
+
+    toast({ title: "Updated", description: "Product and analytics synced successfully." });
+    form.reset();
+    onOpenChange(false);
+  } catch (err: any) {
+    console.error("Error updating product & sale:", err);
+    if (typeof err?.message === "string") setUploadError(err.message);
+    toast({
+      variant: "destructive",
+      title: "Error",
+      description: err?.message || "Failed to update product.",
+    });
+  } finally {
+    setIsSubmitting(false);
+  }
+};
+
+
+  const uploadInFlight =
+    Boolean(isSubmitting && selectedFile) && pct !== null && pct < 100 && !uploadError;
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange} modal={false}>
       <DialogContent
         className="sm:max-w-[520px]"
-        // same protections you used in MarkSoldDialog
         onOpenAutoFocus={(e) => e.preventDefault()}
         onCloseAutoFocus={(e) => e.preventDefault()}
         onInteractOutside={(e) => e.preventDefault()}

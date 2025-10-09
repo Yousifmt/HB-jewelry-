@@ -12,6 +12,7 @@ import {
   query,
   serverTimestamp,
   writeBatch,
+  addDoc,
 } from "firebase/firestore";
 import { endOfDay, format, startOfDay, subDays } from "date-fns";
 import type { DateRange } from "react-day-picker";
@@ -29,18 +30,15 @@ import { useToast } from "@/hooks/use-toast";
 import { ConfirmDialog } from "./confirm-dialog";
 import { MarkSoldDialog } from "./mark-sold-dialog";
 import { Header } from "@/components/layout/header";
-
-// UI polish
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 
-// Client-only (لتفادي مشاكل Hydration)
+// Use named export (no dynamic) to avoid lazy invalid element errors
+import { AnalyticsCharts } from "./analytics-charts";
+
+// DateRangePicker can stay dynamic
 const DateRangePicker = dynamic(
   () => import("./date-range-picker").then((m) => m.DateRangePicker),
-  { ssr: false }
-);
-const AnalyticsCharts = dynamic(
-  () => import("./analytics-charts").then((m) => m.AnalyticsCharts),
   { ssr: false }
 );
 
@@ -61,8 +59,8 @@ export function DashboardPage() {
 
   // ======= Subscriptions: Products =======
   useEffect(() => {
-    const q = query(collection(db, "products"));
-    const unsubscribe = onSnapshot(q, (snap) => {
+    const qRef = query(collection(db, "products"));
+    const unsubscribe = onSnapshot(qRef, (snap) => {
       const list: Product[] = [];
       snap.forEach((d) => list.push({ id: d.id, ...(d.data() as any) }));
       list.sort((a, b) => {
@@ -78,8 +76,8 @@ export function DashboardPage() {
 
   // ======= Subscriptions: Sales =======
   useEffect(() => {
-    const q = query(collection(db, "sales"));
-    const unsubscribe = onSnapshot(q, (snap) => {
+    const qRef = query(collection(db, "sales"));
+    const unsubscribe = onSnapshot(qRef, (snap) => {
       const list: Sale[] = [];
       snap.forEach((d) => list.push({ id: d.id, ...(d.data() as any) }));
       setSales(list);
@@ -107,8 +105,8 @@ export function DashboardPage() {
           });
           await batch.commit();
         }
-        const q = query(ownersRef);
-        unsub = onSnapshot(q, (snap) => {
+        const qRef = query(ownersRef);
+        unsub = onSnapshot(qRef, (snap) => {
           const list: Owner[] = [];
           snap.forEach((d) => list.push({ id: d.id, ...(d.data() as any) }));
           setOwners(list);
@@ -127,7 +125,6 @@ export function DashboardPage() {
     if (!dateRange?.from) return [];
 
     const existingProductIds = new Set(products.map((p) => p.id));
-
     const from = startOfDay(dateRange.from);
     const to = dateRange.to ? endOfDay(dateRange.to) : endOfDay(new Date());
 
@@ -143,16 +140,31 @@ export function DashboardPage() {
     });
   }, [sales, dateRange, products]);
 
-  // ======= KPIs =======
+  // ======= KPIs (cost = unsold inventory; revenue/profit = sold & existing products) =======
   const kpis = useMemo(() => {
-    const totalRevenue = filteredSales.reduce((sum, s) => sum + (s.soldPriceBHD || 0), 0);
-    const totalCost = filteredSales.reduce((sum, s) => sum + (s.buyPriceBHD || 0), 0);
-    const totalProfit = totalRevenue - totalCost;
-    const itemsSoldCount = filteredSales.length;
-    return { totalRevenue, totalCost, totalProfit, itemsSoldCount };
-  }, [filteredSales]);
+    // Unsold inventory cost (existing products)
+    const availableProducts = products.filter((p) => !p.sold);
+    const totalCost = availableProducts.reduce(
+      (sum, p) => sum + (p.buyPriceBHD ?? 0),
+      0
+    );
 
-  // ======= Daily series for chart =======
+    // Revenue & Profit from filteredSales (already ensures product still exists + date range)
+    const totalRevenue = filteredSales.reduce(
+      (sum, s) => sum + (s.soldPriceBHD ?? 0),
+      0
+    );
+    const totalProfit = filteredSales.reduce(
+      (sum, s) => sum + (s.profitBHD ?? 0),
+      0
+    );
+
+    const itemsSoldCount = filteredSales.length;
+
+    return { totalRevenue, totalCost, totalProfit, itemsSoldCount };
+  }, [products, filteredSales]);
+
+  // ======= Daily series for chart (sold & existing products only) =======
   const dailyData = useMemo(() => {
     const byDay: Record<string, { revenue: number; profit: number }> = {};
     for (const s of filteredSales) {
@@ -168,7 +180,7 @@ export function DashboardPage() {
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   }, [filteredSales]);
 
-  // ======= Products search =======
+  // ======= Products search (UI list only) =======
   const filteredProducts = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     if (!q) return products;
@@ -207,6 +219,33 @@ export function DashboardPage() {
         variant: "destructive",
         title: "Error",
         description: "Failed to delete product. Please try again.",
+      });
+    }
+  };
+
+  // ======= CREATE OWNER handler =======
+  const handleCreateOwner = async ({
+    name,
+    contributionBHD,
+  }: {
+    name: string;
+    contributionBHD: number;
+  }) => {
+    try {
+      const ownersRef = collection(db, "owners");
+      await addDoc(ownersRef, {
+        name: name.trim(),
+        contributionBHD: Number(contributionBHD) || 0,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      toast({ title: "Owner added", description: `${name} was created successfully.` });
+    } catch (err) {
+      console.error("add owner error:", err);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to add owner. Please try again.",
       });
     }
   };
@@ -270,7 +309,7 @@ export function DashboardPage() {
           <CardHeader className="pb-2">
             <CardTitle className="text-base">Key Metrics</CardTitle>
           </CardHeader>
-        <CardContent>
+          <CardContent>
             {loading ? (
               <div className="grid grid-cols-2 gap-3 md:gap-4 lg:grid-cols-4">
                 <Skeleton className="h-24 rounded-xl" />
@@ -281,7 +320,7 @@ export function DashboardPage() {
             ) : (
               <div className="grid grid-cols-2 gap-3 md:gap-4 lg:grid-cols-4">
                 <KpiCard title="Total Revenue" value={formatMoney(kpis.totalRevenue)} icon={CircleDollarSign} />
-                <KpiCard title="Total Cost" value={formatMoney(kpis.totalCost)} icon={CircleDollarSign} />
+                <KpiCard title="Total Cost (Unsold Inventory)" value={formatMoney(kpis.totalCost)} icon={CircleDollarSign} />
                 <KpiCard title="Total Profit" value={formatMoney(kpis.totalProfit)} icon={TrendingUp} />
                 <KpiCard title="Items Sold" value={String(kpis.itemsSoldCount)} icon={Package} />
               </div>
@@ -305,33 +344,36 @@ export function DashboardPage() {
         </Card>
 
         {/* Lists */}
-        {/* Lists (stacked on all breakpoints, including desktop) */}
-<div className="grid grid-cols-1 gap-6">
-  <Card className="border shadow-sm">
-    <CardHeader className="pb-2">
-      <CardTitle className="text-base">Products</CardTitle>
-    </CardHeader>
-    <CardContent>
-      <Separator className="mb-4" />
-      <ProductsSection
-        products={filteredProducts}
-        searchQuery={searchQuery}
-        setSearchQuery={setSearchQuery}
-      />
-    </CardContent>
-  </Card>
+        <div className="grid grid-cols-1 gap-6">
+          <Card className="border shadow-sm">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">Products</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Separator className="mb-4" />
+              <ProductsSection
+                products={filteredProducts}
+                searchQuery={searchQuery}
+                setSearchQuery={setSearchQuery}
+              />
+            </CardContent>
+          </Card>
 
-  <Card className="border shadow-sm">
-    <CardHeader className="pb-2">
-      <CardTitle className="text-base">Owners & Contributions</CardTitle>
-    </CardHeader>
-    <CardContent>
-      <Separator className="mb-4" />
-<OwnersSection owners={owners} sales={sales} products={products} />
-    </CardContent>
-  </Card>
-</div>
-
+          <Card className="border shadow-sm">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">Owners & Contributions</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Separator className="mb-4" />
+              <OwnersSection
+                owners={owners}
+                sales={sales}
+                products={products}
+                onCreateOwner={handleCreateOwner}
+              />
+            </CardContent>
+          </Card>
+        </div>
       </main>
     </div>
   );

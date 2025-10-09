@@ -13,51 +13,90 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { AddContributionDialog } from "./add-contribution-dialog";
-import { Users } from "lucide-react";
+import { Plus, Users } from "lucide-react";
 
 interface OwnersSectionProps {
   owners: Owner[];
   sales: Sale[];
-  products: Product[]; // ← NEW: to filter out deleted/non-existing products
+  products: Product[];
+  onCreateOwner?: (payload: { name: string; contributionBHD: number }) => Promise<void> | void;
 }
 
-export function OwnersSection({ owners, sales, products }: OwnersSectionProps) {
+export function OwnersSection({ owners, sales, products, onCreateOwner }: OwnersSectionProps) {
   const [selectedOwner, setSelectedOwner] = useState<Owner | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+
+  // Add Owner dialog
+  const [isAddOwnerOpen, setIsAddOwnerOpen] = useState(false);
+  const [newOwnerName, setNewOwnerName] = useState("");
+  const [newOwnerContribution, setNewOwnerContribution] = useState<string>("");
 
   const handleAddContributionClick = (owner: Owner) => {
     setSelectedOwner(owner);
     setIsDialogOpen(true);
   };
 
-  // Set of existing product IDs (available, not deleted)
+  const openAddOwner = () => {
+    setNewOwnerName("");
+    setNewOwnerContribution("");
+    setIsAddOwnerOpen(true);
+  };
+
+  const handleCreateOwner = async () => {
+    const name = newOwnerName.trim();
+    const contribution = Number(newOwnerContribution);
+    if (!name) return;
+    if (Number.isNaN(contribution) || contribution < 0) return;
+    try {
+      await onCreateOwner?.({ name, contributionBHD: contribution });
+    } finally {
+      setIsAddOwnerOpen(false);
+    }
+  };
+
+  // Helpers
+  const toJsDate = (tsLike: any | undefined): Date | undefined => {
+    const d = tsLike?.toDate?.();
+    return d instanceof Date ? d : undefined;
+  };
+
+  // Existing product IDs
   const existingProductIds = useMemo(
     () => new Set(products.map((p) => p.id)),
     [products]
   );
 
-  // Consider ONLY sales whose product still exists
-  const filteredSales = useMemo(
-    () =>
-      sales.filter(
-        (s) => s.productId && existingProductIds.has(s.productId)
-      ),
-    [sales, existingProductIds]
-  );
+  // Prefer sales for products that still exist; if none (sync delay / deletion), fall back to all sales with productId
+  const filteredSales = useMemo(() => {
+    const withPid = sales.filter((s) => !!s.productId);
+    const withExisting = withPid.filter((s) => existingProductIds.has(s.productId!));
+    return withExisting.length ? withExisting : withPid;
+  }, [sales, existingProductIds]);
 
-  // Latest sale among filtered (valid) sales
+  // Latest sale by soldAt || createdAt
   const latestSale = useMemo(() => {
     if (!filteredSales.length) return null;
     const sorted = [...filteredSales].sort((a, b) => {
-      const aMs = a?.soldAt?.toDate?.()?.getTime?.() ?? 0;
-      const bMs = b?.soldAt?.toDate?.()?.getTime?.() ?? 0;
+      const aDate = toJsDate(a.soldAt) ?? toJsDate((a as any).createdAt);
+      const bDate = toJsDate(b.soldAt) ?? toJsDate((b as any).createdAt);
+      const aMs = aDate?.getTime() ?? 0;
+      const bMs = bDate?.getTime() ?? 0;
       return bMs - aMs;
     });
-    return sorted[0] || null;
+    return sorted[0] ?? null;
   }, [filteredSales]);
 
-  // Sum of contributions (unchanged)
+  // Totals & weights
   const totalContribution = useMemo(
     () =>
       owners.reduce(
@@ -67,30 +106,37 @@ export function OwnersSection({ owners, sales, products }: OwnersSectionProps) {
     [owners]
   );
 
-  // Profit of the latest valid sale only
+  const latestRevenue = latestSale?.soldPriceBHD ?? 0;
   const latestProfit = latestSale?.profitBHD ?? 0;
 
-  // Distribute latest profit only if its product exists (already ensured by latestSale from filteredSales)
-  const shares: Record<string, number> = useMemo(() => {
-    const result: Record<string, number> = {};
-    if (!owners.length || !latestSale) return result;
+  // Weights per owner (by contribution or equal)
+  const weights: Record<string, number> = useMemo(() => {
+    const w: Record<string, number> = {};
+    if (!owners.length || !latestSale) return w;
 
     if (totalContribution > 0) {
-      // Proportional to contributions
+      const total = totalContribution || 1;
       for (const o of owners) {
         const c = Math.max(0, Number(o.contributionBHD || 0));
-        result[o.id] = latestProfit * (c / totalContribution);
+        w[o.id] = c / total;
       }
     } else {
-      // No contributions → equal split
-      const eq = owners.length ? latestProfit / owners.length : 0;
-      for (const o of owners) result[o.id] = eq;
+      const eq = owners.length ? 1 / owners.length : 0;
+      for (const o of owners) w[o.id] = eq;
     }
-    return result;
-  }, [owners, latestSale, latestProfit, totalContribution]);
+    return w;
+  }, [owners, latestSale, totalContribution]);
+
+  // Latest sold product share (profit only)
+  const latestShares: Record<string, number> = useMemo(() => {
+    const res: Record<string, number> = {};
+    if (!latestSale) return res;
+    for (const o of owners) res[o.id] = latestProfit * (weights[o.id] ?? 0);
+    return res;
+  }, [owners, latestSale, latestProfit, weights]);
 
   const latestSoldAtStr = useMemo(() => {
-    const d = latestSale?.soldAt?.toDate?.();
+    const d = toJsDate(latestSale?.soldAt) ?? toJsDate((latestSale as any)?.createdAt);
     if (!d) return "—";
     return d.toLocaleString(undefined, {
       year: "numeric",
@@ -103,27 +149,29 @@ export function OwnersSection({ owners, sales, products }: OwnersSectionProps) {
 
   return (
     <>
-      <div className="mb-4">
+      <div className="mb-4 flex items-center justify-between">
         <h2 className="text-2xl font-bold tracking-tight flex items-center gap-2">
           <Users /> Owners & Contributions
         </h2>
+        <Button onClick={openAddOwner} className="gap-2">
+          <Plus size={16} />
+          Add Owner
+        </Button>
       </div>
 
-      {/* Latest valid sale distribution */}
+      {/* Latest valid sale summary */}
       <Card className="mb-4">
         <CardHeader>
-          <CardTitle>Latest Profit Share</CardTitle>
+          <CardTitle>Latest Distribution</CardTitle>
           <CardDescription>
             {latestSale ? `Last sale on ${latestSoldAtStr}` : "No valid sales yet"}
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <div className="rounded-lg border p-3">
               <div className="text-xs text-muted-foreground">Sold Price</div>
-              <div className="text-lg font-semibold">
-                {formatMoney(latestSale?.soldPriceBHD || 0)}
-              </div>
+              <div className="text-lg font-semibold">{formatMoney(latestRevenue)}</div>
             </div>
             <div className="rounded-lg border p-3">
               <div className="text-xs text-muted-foreground">Buy Cost</div>
@@ -132,10 +180,8 @@ export function OwnersSection({ owners, sales, products }: OwnersSectionProps) {
               </div>
             </div>
             <div className="rounded-lg border p-3">
-              <div className="text-xs text-muted-foreground">Profit</div>
-              <div className="text-lg font-semibold">
-                {formatMoney(latestProfit)}
-              </div>
+              <div className="text-xs text-muted-foreground">Profit (to distribute)</div>
+              <div className="text-lg font-semibold">{formatMoney(latestProfit)}</div>
             </div>
             <div className="rounded-lg border p-3">
               <div className="text-xs text-muted-foreground">Distribution Basis</div>
@@ -145,26 +191,34 @@ export function OwnersSection({ owners, sales, products }: OwnersSectionProps) {
             </div>
           </div>
 
-          {/* Owners shares for latest valid sale */}
+          {/* Per-owner split: ONLY the latest sold product share (profit) */}
           {latestSale && (
             <div className="mt-2">
               <div className="text-sm font-medium mb-2">Owners’ Share of Last Sale</div>
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {owners.map((o) => (
-                  <div
-                    key={o.id}
-                    className="flex items-center justify-between rounded-md border p-3"
-                  >
-                    <div className="flex flex-col">
-                      <span className="font-medium">{o.name}</span>
-                      <span className="text-xs text-muted-foreground">
-                        Contribution: {formatMoney(o.contributionBHD || 0)}
-                      </span>
+                  <div key={o.id} className="rounded-md border p-3">
+                    <div className="flex items-start justify-between">
+                      <div className="flex flex-col">
+                        <span className="font-medium">{o.name}</span>
+                        <span className="text-xs text-muted-foreground">
+                          Contribution: {formatMoney(o.contributionBHD || 0)}
+                        </span>
+                      </div>
+                      <div className="text-right text-xs text-muted-foreground">
+                        Weight: {(weights[o.id] ?? 0).toLocaleString(undefined, {
+                          style: "percent",
+                          minimumFractionDigits: 0,
+                        })}
+                      </div>
                     </div>
-                    <div className="text-right">
-                      <div className="text-sm text-muted-foreground">Latest Share</div>
+
+                    <div className="mt-2 rounded-md bg-muted/40 px-2 py-1.5">
+                      <div className="text-[10px] uppercase text-muted-foreground">
+                        Latest Share (Profit)
+                      </div>
                       <div className="font-semibold">
-                        {formatMoney(shares[o.id] || 0)}
+                        {formatMoney(latestShares[o.id] || 0)}
                       </div>
                     </div>
                   </div>
@@ -188,11 +242,11 @@ export function OwnersSection({ owners, sales, products }: OwnersSectionProps) {
                 {formatMoney(owner.contributionBHD)}
               </p>
 
-              {/* Latest valid sale share */}
+              {/* Only latest sold product share (profit) */}
               <div className="rounded-md bg-muted/40 px-3 py-2">
-                <div className="text-xs text-muted-foreground">Latest Profit Share</div>
+                <div className="text-xs text-muted-foreground">Latest Share</div>
                 <div className="font-medium">
-                  {formatMoney(shares[owner.id] || 0)}
+                  {formatMoney(latestShares[owner.id] || 0)}
                 </div>
               </div>
             </CardContent>
@@ -212,6 +266,47 @@ export function OwnersSection({ owners, sales, products }: OwnersSectionProps) {
           onOpenChange={setIsDialogOpen}
         />
       )}
+
+      {/* Add Owner Dialog */}
+      <Dialog open={isAddOwnerOpen} onOpenChange={setIsAddOwnerOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add New Owner</DialogTitle>
+          </DialogHeader>
+
+          <div className="grid gap-4 py-2">
+            <div className="grid gap-2">
+              <Label htmlFor="owner-name">Owner Name</Label>
+              <Input
+                id="owner-name"
+                value={newOwnerName}
+                onChange={(e) => setNewOwnerName(e.target.value)}
+                placeholder="e.g., Hawra"
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="owner-contribution">Contribution (BHD)</Label>
+              <Input
+                id="owner-contribution"
+                type="number"
+                inputMode="decimal"
+                step="0.001"
+                value={newOwnerContribution}
+                onChange={(e) => setNewOwnerContribution(e.target.value)}
+                placeholder="e.g., 250"
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsAddOwnerOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleCreateOwner}>Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
